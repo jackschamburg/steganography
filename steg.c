@@ -7,18 +7,12 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-#define false 0
-#define true 1
-
 typedef unsigned char byte;
-typedef unsigned char bool;
 
 void encode(byte* dst, byte* src, long src_bytes)
 {
 	int r;
-	long i;
-
-	for(i=0; i<src_bytes*8; i++)
+	for(long i=0; i<src_bytes*8; i++)
 	{
 		r = i%8;
 		dst[i] &= 0xfe;
@@ -28,21 +22,20 @@ void encode(byte* dst, byte* src, long src_bytes)
 
 long decode(byte* dst, byte* src)
 {
-	int r;
-	long i=0;
-	byte b=0;
+	long i=0, n;
+	byte b=0, r;
 
-	while(true)
+	while(1)
 	{
 		r = i%8;
+		n = i/8;
 		b |= (src[i] & 1) << r;
 
 		if(r == 7)
 		{
-			if (i>7 && dst[i/8-1]==0x00 && dst[i/8]==0xff)
-				return (i/8-2);
-			
-			dst[i/8] = b;
+			dst[n] = b;
+			if (i>=32 && dst[n-3]==0x00 && dst[n-2]==0xff && dst[n-1]==0x00 && dst[n]==0xff)
+				return (i/8-3);
 			b=0;
 		}
 		i++;
@@ -80,19 +73,24 @@ int main(int argc, char **argv)
 			fseek(fSecret, 0, SEEK_END);
 			long fSecretSize = ftell(fSecret);
 			rewind(fSecret);
-			if((fSecretSize+2)*8 > fImgSize)
+
+			if((fSecretSize+4)*8 > w*h*n)
 			{
-				printf("File to hide is too large\n");
+				printf("%s is too large to hide in %s\n", argv[3], argv[2]);
 				fclose(fSecret);
 				return 1;
 			}
 
-			byte* bSecret = malloc(fSecretSize+2);
+			byte* bSecret = malloc(fSecretSize+4);
 			fread(bSecret, fSecretSize, 1, fSecret);
+
+			/* Add delimiters */
 			memset(bSecret+fSecretSize, 0x00, 1);
 			memset(bSecret+fSecretSize+1, 0xff, 1);
+			memset(bSecret+fSecretSize+2, 0x00, 1);
+			memset(bSecret+fSecretSize+3, 0xff, 1);
 
-			encode(img, bSecret, fSecretSize);
+			encode(img, bSecret, fSecretSize+4);
 			stbi_write_png("output.png", w, h, n, img, w*n);
 
 			free(bSecret);
@@ -106,11 +104,11 @@ int main(int argc, char **argv)
 	else if ( argv[1][0] == 'd' )
 	{
 		/* DECODE MODE */
-		byte* bOut = malloc(fImgSize/8-2);
+		byte* bOut = malloc(fImgSize/8-16);
 
 		long nBytes = decode(bOut, img);
 
-		printf("malloc'd: %dbytes\nnBytes in file: %dbytes\n", , nBytes);
+		printf("malloc'd: %ldbytes\nnBytes in file: %ldbytes\n", fImgSize/8-16, nBytes);
 
 		FILE* fOut = fopen(argv[3], "wb");
 		fwrite(bOut,nBytes,1,fOut);
