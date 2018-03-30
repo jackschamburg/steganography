@@ -78,6 +78,7 @@ int main(int argc, char **argv)
 			{
 				printf("%s is too large to hide in %s\n", argv[3], argv[2]);
 				fclose(fSecret);
+				stbi_image_free(img);
 				return 1;
 			}
 
