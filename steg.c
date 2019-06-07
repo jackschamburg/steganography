@@ -16,7 +16,7 @@ void printProgramUsage(const char* argv0);
 int main(int argc, char **argv)
 {
 	/* Check the correct command line arguments are provided */
-	if ( argc != 4 )
+	if ( argc < 4 )
 	{
 		printProgramUsage(argv[0]);
 		return 1;
@@ -34,6 +34,9 @@ int main(int argc, char **argv)
 	if ( argv[1][0] == 'e' || argv[1][0] == 'E' )
 	{
 		/* ENCODE MODE */
+
+		
+
 
 		/* Open file to hide */
 		FILE* fSecret = fopen(argv[3], "rb");
@@ -72,8 +75,16 @@ int main(int argc, char **argv)
 			/* Encode secret file data + delimiters into the image */
 			encode(img, bSecret, fSecretSize+4);
 
+			/* Configure output filename */
+			const char * const defaultOutputFilename = "output.png";
+			const char * outputFilename;
+			if ( argc >= 5 )
+				outputFilename = argv[4];
+			else
+				outputFilename = defaultOutputFilename;
+
 			/* Write image with hidden data inside to disk */
-			stbi_write_png("output.png", width, height, num_channels, img, width * num_channels);
+			stbi_write_png(outputFilename, width, height, num_channels, img, width * num_channels);
 
 			free(bSecret);
 		}
@@ -208,6 +219,6 @@ long decode(byte * const dst, const byte * const src, const long src_bytes)
 
 void printProgramUsage(const char* argv0)
 {
-	printf("USAGE: %s e(ncrypt) mask-image.png file-to-hide\n", argv0);
+	printf("USAGE: %s e(ncrypt) mask-image.png file-to-hide [output-filename.png]\n", argv0);
 	printf("USAGE: %s d(ecrypt) mask-image.png output-filename\n", argv0);
 }
