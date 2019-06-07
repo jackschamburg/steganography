@@ -9,6 +9,9 @@
 
 typedef unsigned char byte;
 
+const int delimiterSize = 5;
+const byte delimiter[] = { 0x00, 0xff, 0x00, 0xff, 0xfe };
+
 void encode(byte * const dst, const byte * const src, const long src_bytes);
 long decode(byte * const dst, const byte * const src, const long src_bytes);
 void printProgramUsage(const char* argv0);
@@ -35,9 +38,6 @@ int main(int argc, char **argv)
 	{
 		/* ENCODE MODE */
 
-		
-
-
 		/* Open file to hide */
 		FILE* fSecret = fopen(argv[3], "rb");
 
@@ -50,10 +50,10 @@ int main(int argc, char **argv)
 			rewind(fSecret);
 
 			/*
-			** Check if the size of the secret file + the 4 terminating bytes
+			** Check if the size of the secret file + the size of the delimiter bytes
 			** can be spread across each last bit of each byte in the image
 			*/
-			if ( (fSecretSize + 4) * 8 > width * height * num_channels )
+			if ( (fSecretSize + delimiterSize) * 8 > width * height * num_channels )
 			{
 				/* Secret file is too large to hide within the input image */
 				printf("%s is too large to hide in %s\n", argv[3], argv[2]);
@@ -63,17 +63,14 @@ int main(int argc, char **argv)
 			}
 
 			/* Read the contents of the secret file into memory */
-			byte* bSecret = malloc(fSecretSize+4);
+			byte* bSecret = malloc(fSecretSize+delimiterSize);
 			fread(bSecret, fSecretSize, 1, fSecret);
 
 			/* Add delimiters */
-			memset(bSecret+fSecretSize, 0x00, 1);
-			memset(bSecret+fSecretSize+1, 0xff, 1);
-			memset(bSecret+fSecretSize+2, 0x00, 1);
-			memset(bSecret+fSecretSize+3, 0xff, 1);
+			memcpy(bSecret + fSecretSize, delimiter, delimiterSize);
 
 			/* Encode secret file data + delimiters into the image */
-			encode(img, bSecret, fSecretSize+4);
+			encode(img, bSecret, fSecretSize + delimiterSize);
 
 			/* Configure output filename */
 			const char * const defaultOutputFilename = "output.png";
@@ -106,14 +103,14 @@ int main(int argc, char **argv)
 		fclose(fImg);
 
 		/* Allocate memory for hidden file  */
-		byte* bOut = malloc(fImgSize/8-16);
+		byte* bOut = malloc(fImgSize / 8 - delimiterSize);
 
 		/* Decode the hidden image from the input mask image */
 		long nBytes = decode(bOut, img, width * height * num_channels);
 
 		/* Write the hidden file to disk */
 		FILE* fOut = fopen(argv[3], "wb");
-		fwrite(bOut,nBytes,1,fOut);
+		fwrite(bOut, nBytes, 1, fOut);
 		fclose(fOut);
 
 		free(bOut);
@@ -201,13 +198,23 @@ long decode(byte * const dst, const byte * const src, const long src_bytes)
 			/* Save the current byte to the n'th byte in the output array */
 			dst[n] = b;
 
-			/* Check if the last four bytes are equal to the delimiter string */
-			if (i>=32 && dst[n-3]==0x00 && dst[n-2]==0xff && dst[n-1]==0x00 && dst[n]==0xff)
-				/* If so, return the length of the output file in bytes */
-				return (i/8-3);
+			/* Check if we have reached the delimiter string */
+			if (i >= delimiterSize * 8)
+			{
+				int foundDelimiter = 1; // assume we have found delimiter
+				for ( int j = 0; j < delimiterSize; j++ )
+				{
+					if ( dst[n - (delimiterSize - j - 1)] != delimiter[j] )
+						foundDelimiter = 0; // we did not find the delimiter
+				}
+
+				if ( foundDelimiter )
+					/* return the length of the output file in bytes */
+					return ( i/8 - delimiterSize + 1 );
+			}
 
 			/* Reset the current byte */
-			b=0;
+			b = 0;
 		}
 	}
 
