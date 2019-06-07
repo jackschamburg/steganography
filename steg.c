@@ -9,79 +9,57 @@
 
 typedef unsigned char byte;
 
-void encode(byte* dst, byte* src, long src_bytes)
-{
-	int r;
-	for(long i=0; i<src_bytes*8; i++)
-	{
-		r = i%8;
-		dst[i] &= 0xfe;
-		dst[i] |= (src[i/8] & (1<<r))>>r;
-	}
-}
-
-long decode(byte* dst, byte* src)
-{
-	long i=0, n;
-	byte b=0, r;
-
-	while(1)
-	{
-		r = i%8;
-		n = i/8;
-		b |= (src[i] & 1) << r;
-
-		if(r == 7)
-		{
-			dst[n] = b;
-			if (i>=32 && dst[n-3]==0x00 && dst[n-2]==0xff && dst[n-1]==0x00 && dst[n]==0xff)
-				return (i/8-3);
-			b=0;
-		}
-		i++;
-	}
-}
+void encode(byte * const dst, const byte * const src, const long src_bytes);
+long decode(byte * const dst, const byte * const src, const long src_bytes);
+void printProgramUsage(const char* argv0);
 
 int main(int argc, char **argv)
 {
-	if ( argc < 3 )
+	/* Check the correct command line arguments are provided */
+	if ( argc != 4 )
 	{
-		printf("USAGE: %s e input.png file-to-hide\n", argv[0]);
-		printf("USAGE: %s d input.png output-filename\n", argv[0]);
+		printProgramUsage(argv[0]);
 		return 1;
 	}
 
-	int w,h,n;
-	byte *img = stbi_load(argv[2], &w, &h, &n, 0);
-	if( img == NULL ) 
+	/* Load input image into memory */
+	int width, height, num_channels;
+	byte *img = stbi_load(argv[2], &width, &height, &num_channels, 0);
+	if ( img == NULL ) 
 	{
 		printf("Could not open '%s'\n", argv[2]);
 		return 1;
 	}
-	FILE* fImg = fopen(argv[2], "rb");
-	fseek(fImg, 0, SEEK_END);
-	long fImgSize = ftell(fImg);
-	fclose(fImg);
 
-	if( argv[1][0] == 'e' )
+	if ( argv[1][0] == 'e' || argv[1][0] == 'E' )
 	{
 		/* ENCODE MODE */
+
+		/* Open file to hide */
 		FILE* fSecret = fopen(argv[3], "rb");
 
-		if(fSecret != NULL)
+		/* If file exists */
+		if ( fSecret != NULL )
 		{
+			/* Calculate the size in bytes of the secret file */
 			fseek(fSecret, 0, SEEK_END);
 			long fSecretSize = ftell(fSecret);
 			rewind(fSecret);
 
-			if((fSecretSize+4)*8 > w*h*n)
+			/*
+			** Check if the size of the secret file + the 4 terminating bytes
+			** can be spread across each last bit of each byte in the image
+			*/
+			if ( (fSecretSize + 4) * 8 > width * height * num_channels )
 			{
+				/* Secret file is too large to hide within the input image */
 				printf("%s is too large to hide in %s\n", argv[3], argv[2]);
 				fclose(fSecret);
 				stbi_image_free(img);
 				return 1;
 			}
 
+			/* Read the contents of the secret file into memory */
 			byte* bSecret = malloc(fSecretSize+4);
 			fread(bSecret, fSecretSize, 1, fSecret);
 
@@ -91,11 +69,15 @@ int main(int argc, char **argv)
 			memset(bSecret+fSecretSize+2, 0x00, 1);
 			memset(bSecret+fSecretSize+3, 0xff, 1);
 
+			/* Encode secret file data + delimiters into the image */
 			encode(img, bSecret, fSecretSize+4);
-			stbi_write_png("output.png", w, h, n, img, w*n);
+
+			/* Write image with hidden data inside to disk */
+			stbi_write_png("output.png", width, height, num_channels, img, width * num_channels);
 
 			free(bSecret);
 		}
+		/* Else if secret file does not exist on disk */
 		else
 			printf("Could not open '%s'\n", argv[3]);
 
@@ -105,12 +87,20 @@ int main(int argc, char **argv)
 	else if ( argv[1][0] == 'd' )
 	{
 		/* DECODE MODE */
+
+		/* Calculate the size in bytes of the input mask image */
+		FILE* fImg = fopen(argv[2], "rb");
+		fseek(fImg, 0, SEEK_END);
+		long fImgSize = ftell(fImg);
+		fclose(fImg);
+
+		/* Allocate memory for hidden file  */
 		byte* bOut = malloc(fImgSize/8-16);
 
-		long nBytes = decode(bOut, img);
+		/* Decode the hidden image from the input mask image */
+		long nBytes = decode(bOut, img, width * height * num_channels);
 
-		printf("malloc'd: %ldbytes\nnBytes in file: %ldbytes\n", fImgSize/8-16, nBytes);
-
+		/* Write the hidden file to disk */
 		FILE* fOut = fopen(argv[3], "wb");
 		fwrite(bOut,nBytes,1,fOut);
 		fclose(fOut);
@@ -119,11 +109,105 @@ int main(int argc, char **argv)
 	}
 	else
 	{
-		printf("ARG 1 must be either e|d\n");
+		printProgramUsage(argv[0]);
 		return 1;
 	}
 	
 	stbi_image_free(img);
 
 	return 0;
+}
+
+/*
+** Encode the src byte array into the last bit of each byte in the dst byte array.
+**
+** Inputs:
+**			- dst is the byte array of the mask image's pixels
+**			- src is the byte array of the image-to-hide's pixels
+**			- src_bytes is the length of the src byte array which INCLUDES
+**			  the delimiter string!
+**
+** Pre-conditions:
+**			- the size of the dst array must be at least 8 times the size
+**			  of the src array + the length of the delimiter
+*/ 
+void encode(byte * const dst, const byte * const src, const long src_bytes)
+{
+	/* Loop for i=0 to i=num_of_bits-1 in src byte array */
+	for ( long i = 0; i < src_bytes * 8; i++ )
+	{
+		/* Clear the last bit of the mask image */
+		dst[i] &= 0xfe;
+
+		/*
+		** Set the last bit of the mask image to the i'th bit 
+		** from the src byte array 
+		*/
+		int r = i % 8;
+		dst[i] |= ( src[i/8] & (1 << r) ) >> r;
+	}
+}
+
+/*
+** Decode the file hidden within the last bit of each byte within the 
+** src byte array
+**
+** Inputs:
+**			- dst is the byte array to write the hidden file to
+**			- src is the byte array of mask image with a file hidden within
+**			- src_bytes is the length of the src array in bytes
+**
+** Returns: - the size of the decoded hidden file in bytes
+**
+** Pre-conditions:
+**			- the size of the dst array must be at least the size of the src
+** 			  array divided by 8
+*/ 
+long decode(byte * const dst, const byte * const src, const long src_bytes)
+{
+	long n;			// stores what byte in the dst array the loop is up to
+	byte b = 0;		// stores the current byte. Is reset after each byte has been written to dst
+	byte r;			// stores what bit in the current byte the loop is up to
+
+	/* Loop over every byte in the src array */
+	for ( long i = 0; i < src_bytes; i++ )
+	{
+		/* Calculate the number of times to rotate the bit into place */
+		r = i % 8;
+
+		/* Calculate what byte in the dst array we are up to */
+		n = i / 8;
+
+		/* 
+		** Set the r'th bit in the current byte to the value of the i'th src 
+		** byte's least significant bit
+		*/
+		b |= ( src[i] & 1 ) << r;
+
+		/* If all bits in the current byte have been set */
+		if ( r == 7 )
+		{
+			/* Save the current byte to the n'th byte in the output array */
+			dst[n] = b;
+
+			/* Check if the last four bytes are equal to the delimiter string */
+			if (i>=32 && dst[n-3]==0x00 && dst[n-2]==0xff && dst[n-1]==0x00 && dst[n]==0xff)
+				/* If so, return the length of the output file in bytes */
+				return (i/8-3);
+
+			/* Reset the current byte */
+			b=0;
+		}
+	}
+
+	/* Function did not return in the for-loop above! */
+	/* File-ending delimiter was not reached so something went wrong here... */
+	fprintf(stderr, "Error when decoding: matching delimiter not found within src mask file\n");
+	return src_bytes;
+}
+
+void printProgramUsage(const char* argv0)
+{
+	printf("USAGE: %s e(ncrypt) mask-image.png file-to-hide\n", argv0);
+	printf("USAGE: %s d(ecrypt) mask-image.png output-filename\n", argv0);
 }
